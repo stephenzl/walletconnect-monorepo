@@ -56,6 +56,7 @@ export class Pairing implements IPairing {
 
   private initialized = false;
   private storagePrefix = CORE_STORAGE_PREFIX;
+  private registeredMethods: string[] = [];
 
   constructor(public core: ICore, public logger: Logger) {
     this.core = core;
@@ -77,6 +78,12 @@ export class Pairing implements IPairing {
   get context() {
     return getLoggerContext(this.logger);
   }
+
+  // TODO: needs validation logic
+  public register: IPairing["register"] = ({ methods }) => {
+    this.registeredMethods = methods;
+    console.log("this.registeredMethods:", this.registeredMethods);
+  };
 
   public create: IPairing["create"] = async () => {
     this.isInitialized();
@@ -240,7 +247,7 @@ export class Pairing implements IPairing {
       case "wc_pairingDelete":
         return this.onPairingDeleteRequest(topic, payload);
       default:
-        return this.logger.info(`Unsupported request method ${reqMethod}`);
+        return this.onUnknownRpcMethodRequest(topic, payload);
     }
   };
 
@@ -253,7 +260,7 @@ export class Pairing implements IPairing {
       case "wc_pairingPing":
         return this.onPairingPingResponse(topic, payload);
       default:
-        return this.logger.info(`Unsupported response method ${resMethod}`);
+        return this.onUnknownRpcMethodResponse(topic, payload);
     }
   };
 
@@ -296,6 +303,42 @@ export class Pairing implements IPairing {
       await this.sendResult<"wc_pairingDelete">(id, topic, true);
       await this.deletePairing(topic);
       this.events.emit("pairing_delete", { id, topic });
+    } catch (err: any) {
+      await this.sendError(id, topic, err);
+      this.logger.error(err);
+    }
+  };
+
+  private onUnknownRpcMethodRequest: IPairingPrivate["onUnknownRpcMethodRequest"] = async (
+    topic,
+    payload,
+  ) => {
+    const { id, method } = payload;
+    try {
+      // Ignore if the implementing client has registered this method as known.
+      if (this.registeredMethods.includes(method)) return;
+      await this.sendError(id, topic, {
+        code: -1,
+        message: `Unsupported response method ${method}`,
+      });
+    } catch (err: any) {
+      await this.sendError(id, topic, err);
+      this.logger.error(err);
+    }
+  };
+
+  private onUnknownRpcMethodResponse: IPairingPrivate["onUnknownRpcMethodResponse"] = async (
+    topic,
+    payload,
+  ) => {
+    const { id, method } = payload;
+    try {
+      // Ignore if the implementing client has registered this method as known.
+      if (this.registeredMethods.includes(method)) return;
+      await this.sendError(id, topic, {
+        code: -1,
+        message: `Unsupported request method ${method}`,
+      });
     } catch (err: any) {
       await this.sendError(id, topic, err);
       this.logger.error(err);
